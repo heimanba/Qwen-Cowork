@@ -1,9 +1,7 @@
-import { query, type SDKMessage, type PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import { query, type SDKMessage, type PermissionResult } from "@qwen-code/sdk";
 import type { ServerEvent } from "../types.js";
 import type { Session } from "./session-store.js";
-
-import { getCurrentApiConfig, buildEnvForConfig, getClaudeCodePath} from "./claude-settings.js";
-import { getEnhancedEnv } from "./util.js";
+import { qwenCodePath, enhancedEnv} from "./util.js";
 
 
 export type RunnerOptions = {
@@ -42,35 +40,16 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   // Start the query in the background
   (async () => {
     try {
-      // 获取当前配置
-      const config = getCurrentApiConfig();
-      
-      if (!config) {
-        onEvent({
-          type: "session.status",
-          payload: { sessionId: session.id, status: "error", title: session.title, cwd: session.cwd, error: "API configuration not found. Please configure API settings." }
-        });
-        return;
-      }
-      
-      // 使用 Anthropic SDK
-      const env = buildEnvForConfig(config);
-      const mergedEnv = {
-        ...getEnhancedEnv(),
-        ...env
-      };
-      
       const q = query({
         prompt,
         options: {
           cwd: session.cwd ?? DEFAULT_CWD,
-          resume: resumeSessionId,
+          // resume: resumeSessionId, // qwen-code/sdk 暂不支持会话恢复
           abortController,
-          env: mergedEnv,
-          pathToClaudeCodeExecutable: getClaudeCodePath(),
-          permissionMode: "bypassPermissions",
+          env: enhancedEnv,
+          pathToQwenExecutable: qwenCodePath,
+          permissionMode: "yolo",  // 自动批准所有工具调用
           includePartialMessages: true,
-          allowDangerouslySkipPermissions: true,
           canUseTool: async (toolName, input, { signal }) => {
             // For AskUserQuestion, we need to wait for user response
             if (toolName === "AskUserQuestion") {

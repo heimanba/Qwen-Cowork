@@ -4,15 +4,17 @@ import type {
   SDKAssistantMessage,
   SDKMessage,
   SDKResultMessage,
-  SDKUserMessage
-} from "@anthropic-ai/claude-agent-sdk";
+  ToolResultBlock,
+  ContentBlock
+} from "@qwen-code/sdk";
 import type { StreamMessage } from "../types";
 import type { PermissionRequest } from "../store/useAppStore";
 import MDContent from "../render/markdown";
 import { DecisionPanel } from "./DecisionPanel";
 
 type MessageContent = SDKAssistantMessage["message"]["content"][number];
-type ToolResultContent = SDKUserMessage["message"]["content"][number];
+// Use ToolResultBlock directly for proper type checking
+type ToolResultContent = ToolResultBlock;
 type ToolStatus = "pending" | "success" | "error";
 const toolStatusMap = new Map<string, ToolStatus>();
 const toolStatusListeners = new Set<() => void>();
@@ -69,7 +71,6 @@ const StatusDot = ({ variant = "accent", isActive = false, isVisible = true }: {
 
 const SessionResult = ({ message }: { message: SDKResultMessage }) => {
   const formatMinutes = (ms: number | undefined) => typeof ms !== "number" ? "-" : `${(ms / 60000).toFixed(2)} min`;
-  const formatUsd = (usd: number | undefined) => typeof usd !== "number" ? "-" : usd.toFixed(2);
   const formatMillions = (tokens: number | undefined) => typeof tokens !== "number" ? "-" : `${(tokens / 1_000_000).toFixed(4)} M`;
 
   return (
@@ -84,7 +85,6 @@ const SessionResult = ({ message }: { message: SDKResultMessage }) => {
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[14px]">
           <span className="font-normal">Usage</span>
-          <span className="inline-flex items-center rounded-full bg-accent/10 px-2.5 py-0.5 text-accent text-[13px]">Cost ${formatUsd(message.total_cost_usd)}</span>
           <span className="inline-flex items-center rounded-full bg-surface-tertiary px-2.5 py-0.5 text-ink-700 text-[13px]">Input {formatMillions(message.usage?.input_tokens)}</span>
           <span className="inline-flex items-center rounded-full bg-surface-tertiary px-2.5 py-0.5 text-ink-700 text-[13px]">Output {formatMillions(message.usage?.output_tokens)}</span>
         </div>
@@ -110,8 +110,6 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
   const isFirstRender = useRef(true);
   let lines: string[] = [];
   
-  if (messageContent.type !== "tool_result") return null;
-  
   const toolUseId = messageContent.tool_use_id;
   const status: ToolStatus = messageContent.is_error ? "error" : "success";
   const isError = messageContent.is_error;
@@ -120,10 +118,17 @@ const ToolResult = ({ messageContent }: { messageContent: ToolResultContent }) =
     lines = [extractTagContent(String(messageContent.content), "tool_use_error") || String(messageContent.content)];
   } else {
     try {
-      if (Array.isArray(messageContent.content)) {
-        lines = messageContent.content.map((item: any) => item.text || "").join("\n").split("\n");
+      const content = messageContent.content;
+      if (Array.isArray(content)) {
+        lines = content.map((item: ContentBlock) => {
+          if (typeof item === 'string') return item;
+          if ('text' in item) return item.text || "";
+          return "";
+        }).join("\n").split("\n");
+      } else if (typeof content === 'string') {
+        lines = content.split("\n");
       } else {
-        lines = String(messageContent.content).split("\n");
+        lines = [String(content)];
       }
     } catch { lines = [JSON.stringify(messageContent, null, 2)]; }
   }
@@ -348,11 +353,15 @@ export function MessageCard({
 
   if (sdkMessage.type === "user") {
     const contents = sdkMessage.message.content;
+    // Handle both string and ContentBlock[] types
+    if (typeof contents === 'string') {
+      return null;
+    }
     return (
       <>
-        {contents.map((content: ToolResultContent, idx: number) => {
+        {contents.map((content: ContentBlock, idx: number) => {
           if (content.type === "tool_result") {
-            return <ToolResult key={idx} messageContent={content} />;
+            return <ToolResult key={idx} messageContent={content as ToolResultBlock} />;
           }
           return null;
         })}

@@ -25,3 +25,6 @@ dist-electron
 *.sw?
 
 .env
+
+# opensrc - source code for packages
+opensrc/

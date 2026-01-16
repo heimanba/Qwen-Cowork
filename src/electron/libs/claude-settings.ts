@@ -1,77 +1,64 @@
+import type { ClaudeSettingsEnv } from "../types.js";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import { loadApiConfig, saveApiConfig, type ApiConfig } from "./config-store.js";
-import { app } from "electron";
 
-// Get Claude Code CLI path
-export function getClaudeCodePath(): string {
-  if (app.isPackaged) {
-    // For packaged apps, the SDK needs the explicit path to the CLI
-    // The path should point to the unpackaged asar.unpacked directory
-    return join(
-      process.resourcesPath,
-      'app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk/cli.js'
-    );
+// Environment variable keys for Qwen/OpenAI compatible configuration
+// These can be configured via ~/.qwen/settings.json or environment variables
+const QWEN_SETTINGS_ENV_KEYS = [
+  "ANTHROPIC_AUTH_TOKEN",   // Legacy: for backward compatibility
+  "ANTHROPIC_BASE_URL",     // Legacy: for backward compatibility
+  "ANTHROPIC_MODEL",        // Legacy: for backward compatibility
+  "OPENAI_API_KEY",         // OpenAI-compatible API key
+  "OPENAI_BASE_URL",        // OpenAI-compatible base URL
+  "OPENAI_MODEL",           // OpenAI-compatible model name
+  "QWEN_API_KEY",           // Qwen-specific API key
+  "QWEN_BASE_URL",          // Qwen-specific base URL
+  "QWEN_MODEL",             // Qwen-specific model name
+  "API_TIMEOUT_MS",
+  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"
+] as const;
+
+export function loadClaudeSettingsEnv(): ClaudeSettingsEnv {
+  // Try loading from Qwen settings first
+  try {
+    const qwenSettingsPath = join(homedir(), ".qwen", "settings.json");
+    const raw = readFileSync(qwenSettingsPath, "utf8");
+    const parsed = JSON.parse(raw) as { env?: Record<string, unknown> };
+    if (parsed.env) {
+      for (const [key, value] of Object.entries(parsed.env)) {
+        if (process.env[key] === undefined && value !== undefined && value !== null) {
+          process.env[key] = String(value);
+        }
+      }
+    }
+  } catch {
+    // Ignore missing or invalid Qwen settings file
   }
-  // In development, use node_modules CLI
-  return join(app.getAppPath(), 'node_modules/@anthropic-ai/claude-agent-sdk/cli.js');
-}
 
-// 获取当前有效的配置（优先界面配置，回退到文件配置）
-export function getCurrentApiConfig(): ApiConfig | null {
-  const uiConfig = loadApiConfig();
-  if (uiConfig) {
-    console.log("[claude-settings] Using UI config:", {
-      baseURL: uiConfig.baseURL,
-      model: uiConfig.model,
-      apiType: uiConfig.apiType
-    });
-    return uiConfig;
-  }
-
-  // 回退到 ~/.claude/settings.json
+  // Fallback to Claude settings for backward compatibility
   try {
     const settingsPath = join(homedir(), ".claude", "settings.json");
     const raw = readFileSync(settingsPath, "utf8");
     const parsed = JSON.parse(raw) as { env?: Record<string, unknown> };
     if (parsed.env) {
-      const authToken = parsed.env.ANTHROPIC_AUTH_TOKEN;
-      const baseURL = parsed.env.ANTHROPIC_BASE_URL;
-      const model = parsed.env.ANTHROPIC_MODEL;
-
-      if (authToken && baseURL && model) {
-        console.log("[claude-settings] Using file config from ~/.claude/settings.json");
-        const config: ApiConfig = {
-          apiKey: String(authToken),
-          baseURL: String(baseURL),
-          model: String(model),
-          apiType: "anthropic"
-        };
-        // 持久化到 api-config.json
-        try {
-          saveApiConfig(config);
-          console.log("[claude-settings] Persisted config to api-config.json");
-        } catch (e) {
-          console.error("[claude-settings] Failed to persist config:", e);
+      for (const [key, value] of Object.entries(parsed.env)) {
+        if (process.env[key] === undefined && value !== undefined && value !== null) {
+          process.env[key] = String(value);
         }
-        return config;
       }
     }
   } catch {
-    // Ignore missing or invalid settings file.
+    // Ignore missing or invalid Claude settings file
   }
-  
-  console.log("[claude-settings] No config found");
-  return null;
+
+  const env = {} as ClaudeSettingsEnv;
+  for (const key of QWEN_SETTINGS_ENV_KEYS) {
+    (env as Record<string, string>)[key] = process.env[key] ?? "";
+  }
+  return env;
 }
 
-export function buildEnvForConfig(config: ApiConfig): Record<string, string> {
-  const baseEnv = { ...process.env } as Record<string, string>;
-
-  baseEnv.ANTHROPIC_AUTH_TOKEN = config.apiKey;
-  baseEnv.ANTHROPIC_BASE_URL = config.baseURL;
-  baseEnv.ANTHROPIC_MODEL = config.model;
-
-  return baseEnv;
-}
+export const qwenCodeEnv = loadClaudeSettingsEnv();
+// Alias for backward compatibility
+export const claudeCodeEnv = qwenCodeEnv;
