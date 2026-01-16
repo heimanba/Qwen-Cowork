@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import type { PermissionResult } from "@qwen-code/sdk";
 import { useIPC } from "./hooks/useIPC";
 import { useAppStore } from "./store/useAppStore";
 import type { ServerEvent } from "./types";

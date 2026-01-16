@@ -1,4 +1,4 @@
-import type { SDKMessage, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKMessage, PermissionResult } from "@qwen-code/sdk";
 
 export type UserPromptMessage = {
   type: "user_prompt";
