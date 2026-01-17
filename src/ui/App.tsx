@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import { useIPC } from "./hooks/useIPC";
+import { useMessageWindow } from "./hooks/useMessageWindow";
 import { useAppStore } from "./store/useAppStore";
 import type { ServerEvent } from "./types";
 import { Sidebar } from "./components/Sidebar";
@@ -9,21 +10,20 @@ import { PromptInput, usePromptActions } from "./components/PromptInput";
 import { MessageCard } from "./components/EventCard";
 import MDContent from "./render/markdown";
 
-// 滚动到底部的阈值（px），用户滚动到距离底部这个范围内，视为"在底部"
 const SCROLL_THRESHOLD = 50;
 
 function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const topSentinelRef = useRef<HTMLDivElement>(null);
   const partialMessageRef = useRef("");
   const [partialMessage, setPartialMessage] = useState("");
   const [showPartialMessage, setShowPartialMessage] = useState(false);
-  // 控制是否自动滚动到底部
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
-  // 是否有新消息（用于显示提示按钮）
   const [hasNewMessages, setHasNewMessages] = useState(false);
-  // 记录上一次消息数量，用于判断是否有新消息
   const prevMessagesLengthRef = useRef(0);
+  const scrollHeightBeforeLoadRef = useRef(0);
+  const shouldRestoreScrollRef = useRef(false);
 
   const sessions = useAppStore((s) => s.sessions);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
@@ -66,11 +66,9 @@ function App() {
     if (message.event.type === "content_block_delta") {
       partialMessageRef.current += getPartialMessageContent(message.event) || "";
       setPartialMessage(partialMessageRef.current);
-      // 仅在 shouldAutoScroll 为 true 时滚动到底部
       if (shouldAutoScroll) {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
       } else {
-        // 用户不在底部，标记有新消息
         setHasNewMessages(true);
       }
     }
@@ -98,6 +96,15 @@ function App() {
   const permissionRequests = activeSession?.permissionRequests ?? [];
   const isRunning = activeSession?.status === "running";
 
+  const {
+    visibleMessages,
+    hasMoreHistory,
+    isLoadingHistory,
+    loadMoreMessages,
+    resetToLatest,
+    totalMessages,
+  } = useMessageWindow(messages, permissionRequests, activeSessionId);
+
   useEffect(() => {
     if (connected) sendEvent({ type: "session.list" });
   }, [connected, sendEvent]);
@@ -111,53 +118,88 @@ function App() {
     }
   }, [activeSessionId, connected, sessions, historyRequested, markHistoryRequested, sendEvent]);
 
-  // 滚动事件处理：判断用户是否滚动到底部
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
     const { scrollTop, scrollHeight, clientHeight } = container;
     const isAtBottom = scrollTop + clientHeight >= scrollHeight - SCROLL_THRESHOLD;
-    
-    // 仅在状态需要改变时更新
+
     if (isAtBottom !== shouldAutoScroll) {
       setShouldAutoScroll(isAtBottom);
-      // 用户滚动到底部时，清除新消息提示
       if (isAtBottom) {
         setHasNewMessages(false);
       }
     }
   }, [shouldAutoScroll]);
 
-  // 会话切换时重置滚动状态
+  // Set up IntersectionObserver for top sentinel
   useEffect(() => {
-    // 当会话切换时，重置自动滚动状态并滚动到底部
+    const sentinel = topSentinelRef.current;
+    const container = scrollContainerRef.current;
+    if (!sentinel || !container) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry.isIntersecting && hasMoreHistory && !isLoadingHistory) {
+          scrollHeightBeforeLoadRef.current = container.scrollHeight;
+          shouldRestoreScrollRef.current = true;
+          loadMoreMessages();
+        }
+      },
+      {
+        root: container,
+        rootMargin: "100px 0px 0px 0px",
+        threshold: 0,
+      }
+    );
+
+    observer.observe(sentinel);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [hasMoreHistory, isLoadingHistory, loadMoreMessages]);
+
+  // Restore scroll position after loading history
+  useEffect(() => {
+    if (shouldRestoreScrollRef.current && !isLoadingHistory) {
+      const container = scrollContainerRef.current;
+      if (container) {
+        const newScrollHeight = container.scrollHeight;
+        const scrollDiff = newScrollHeight - scrollHeightBeforeLoadRef.current;
+        container.scrollTop += scrollDiff;
+      }
+      shouldRestoreScrollRef.current = false;
+    }
+  }, [visibleMessages, isLoadingHistory]);
+
+  // Reset scroll state on session change
+  useEffect(() => {
     setShouldAutoScroll(true);
     setHasNewMessages(false);
     prevMessagesLengthRef.current = 0;
-    // 延迟执行滚动，确保消息已渲染
     setTimeout(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
     }, 100);
   }, [activeSessionId]);
 
   useEffect(() => {
-    // 仅在 shouldAutoScroll 为 true 时滚动到底部
     if (shouldAutoScroll) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     } else if (messages.length > prevMessagesLengthRef.current && prevMessagesLengthRef.current > 0) {
-      // 有新消息且用户不在底部
       setHasNewMessages(true);
     }
     prevMessagesLengthRef.current = messages.length;
   }, [messages, partialMessage, shouldAutoScroll]);
 
-  // 点击"有新消息"按钮，滚动到底部
   const scrollToBottom = useCallback(() => {
     setShouldAutoScroll(true);
     setHasNewMessages(false);
+    resetToLatest();
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, []);
+  }, [resetToLatest]);
 
   const handleNewSession = useCallback(() => {
     useAppStore.getState().setActiveSessionId(null);
@@ -174,6 +216,12 @@ function App() {
     resolvePermissionRequest(activeSessionId, toolUseId);
   }, [activeSessionId, sendEvent, resolvePermissionRequest]);
 
+  const handleSendMessage = useCallback(() => {
+    setShouldAutoScroll(true);
+    setHasNewMessages(false);
+    resetToLatest();
+  }, [resetToLatest]);
+
   return (
     <div className="flex h-screen bg-surface">
       <Sidebar
@@ -183,30 +231,54 @@ function App() {
       />
 
       <main className="flex flex-1 flex-col ml-[280px] bg-surface-cream">
-        <div 
+        <div
           className="flex items-center justify-center h-12 border-b border-ink-900/10 bg-surface-cream select-none"
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         >
           <span className="text-sm font-medium text-ink-700">{activeSession?.title || "Agent Cowork"}</span>
         </div>
 
-        <div 
+        <div
           ref={scrollContainerRef}
           onScroll={handleScroll}
           className="flex-1 overflow-y-auto px-8 pb-40 pt-6"
         >
           <div className="mx-auto max-w-3xl">
-            {messages.length === 0 ? (
+            <div ref={topSentinelRef} className="h-1" />
+
+            {!hasMoreHistory && totalMessages > 0 && (
+              <div className="flex items-center justify-center py-4 mb-4">
+                <div className="flex items-center gap-2 text-xs text-muted">
+                  <div className="h-px w-12 bg-ink-900/10" />
+                  <span>Beginning of conversation</span>
+                  <div className="h-px w-12 bg-ink-900/10" />
+                </div>
+              </div>
+            )}
+
+            {isLoadingHistory && (
+              <div className="flex items-center justify-center py-4 mb-4">
+                <div className="flex items-center gap-2 text-xs text-muted">
+                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <span>Loading...</span>
+                </div>
+              </div>
+            )}
+
+            {visibleMessages.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center">
                 <div className="text-lg font-medium text-ink-700">No messages yet</div>
                 <p className="mt-2 text-sm text-muted">Start a conversation with Claude Code</p>
               </div>
             ) : (
-              messages.map((msg, idx) => (
+              visibleMessages.map((item, idx) => (
                 <MessageCard
-                  key={idx}
-                  message={msg}
-                  isLast={idx === messages.length - 1}
+                  key={`${activeSessionId}-msg-${item.originalIndex}`}
+                  message={item.message}
+                  isLast={idx === visibleMessages.length - 1}
                   isRunning={isRunning}
                   permissionRequest={permissionRequests[0]}
                   onPermissionResult={handlePermissionResult}
@@ -242,12 +314,8 @@ function App() {
           </div>
         </div>
 
-        <PromptInput sendEvent={sendEvent} onSendMessage={() => {
-          setShouldAutoScroll(true);
-          setHasNewMessages(false);
-        }} />
+        <PromptInput sendEvent={sendEvent} onSendMessage={handleSendMessage} />
 
-        {/* 有新消息提示按钮 */}
         {hasNewMessages && !shouldAutoScroll && (
           <button
             onClick={scrollToBottom}
@@ -256,7 +324,7 @@ function App() {
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 5v14M5 12l7 7 7-7" />
             </svg>
-            <span>有新消息</span>
+            <span>New messages</span>
           </button>
         )}
       </main>
