@@ -5,9 +5,16 @@ import { SessionStore } from "./libs/session-store.js";
 import { app } from "electron";
 import { join } from "path";
 
-const DB_PATH = join(app.getPath("userData"), "sessions.db");
-const sessions = new SessionStore(DB_PATH);
+let sessions: SessionStore;
 const runnerHandles = new Map<string, RunnerHandle>();
+
+function initializeSessions() {
+  if (!sessions) {
+    const DB_PATH = join(app.getPath("userData"), "sessions.db");
+    sessions = new SessionStore(DB_PATH);
+  }
+  return sessions;
+}
 
 function broadcast(event: ServerEvent) {
   const payload = JSON.stringify(event);
@@ -34,6 +41,9 @@ function emit(event: ServerEvent) {
 }
 
 export function handleClientEvent(event: ClientEvent) {
+  // Initialize sessions on first event
+  const sessions = initializeSessions();
+
   if (event.type === "session.list") {
     emit({
       type: "session.list",
@@ -225,7 +235,9 @@ export function cleanupAllSessions(): void {
     handle.abort();
   }
   runnerHandles.clear();
-  sessions.close();
+  if (sessions) {
+    sessions.close();
+  }
 }
 
 export { sessions };

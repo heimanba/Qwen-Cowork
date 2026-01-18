@@ -89,9 +89,10 @@ bun install
 bun run dev
 
 # Or build production binaries
-bun run dist:mac    # macOS
-bun run dist:win    # Windows
-bun run dist:linux  # Linux
+bun run dist:mac-arm64    # macOS Apple Silicon (M1/M2/M3)
+bun run dist:mac-x64      # macOS Intel
+bun run dist:win          # Windows
+bun run dist:linux        # Linux
 `
 
 ---

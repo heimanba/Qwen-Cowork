@@ -8,11 +8,14 @@ import { homedir } from "os";
 // Get Claude Code CLI path for packaged app
 export function getClaudeCodePath(): string | undefined {
   if (app.isPackaged) {
+    // For packaged apps, the SDK needs the explicit path to the CLI
+    // The path should point to the unpackaged asar.unpacked directory
     return join(
       process.resourcesPath,
       'app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk/cli.js'
     );
   }
+  // In development, return undefined to let the SDK find the CLI via PATH
   return undefined;
 }
 
@@ -41,25 +44,44 @@ export function getEnhancedEnv(): Record<string, string | undefined> {
   };
 }
 
-export const claudeCodePath = getClaudeCodePath();
 export const enhancedEnv = getEnhancedEnv();
 
 export const generateSessionTitle = async (userIntent: string | null) => {
   if (!userIntent) return "New Session";
 
-  const result: SDKResultMessage = await unstable_v2_prompt(
-    `please analynis the following user input to generate a short but clearly title to identify this conversation theme:
-    ${userIntent}
-    directly output the title, do not include any other content`, {
-    model: claudeCodeEnv.ANTHROPIC_MODEL,
-    env: enhancedEnv,
-    pathToClaudeCodeExecutable: claudeCodePath,
-  });
+  // Get the Claude Code path when needed, not at module load time
+  const claudeCodePath = getClaudeCodePath();
 
-  if (result.subtype === "success") {
-    return result.result;
+  try {
+    const result: SDKResultMessage = await unstable_v2_prompt(
+      `please analynis the following user input to generate a short but clearly title to identify this conversation theme:
+      ${userIntent}
+      directly output the title, do not include any other content`, {
+      model: claudeCodeEnv.ANTHROPIC_MODEL,
+      env: enhancedEnv,
+      pathToClaudeCodeExecutable: claudeCodePath,
+    });
+
+    if (result.subtype === "success") {
+      return result.result;
+    }
+
+    // Log any non-success result for debugging
+    console.error("Claude SDK returned non-success result:", result);
+    return "New Session";
+  } catch (error) {
+    // Enhanced error logging for packaged app debugging
+    console.error("Failed to generate session title:", error);
+    console.error("Claude Code path:", claudeCodePath);
+    console.error("Is packaged:", app.isPackaged);
+    console.error("Resources path:", process.resourcesPath);
+
+    // Return a simple title based on user input as fallback
+    if (userIntent) {
+      const words = userIntent.trim().split(/\s+/).slice(0, 5);
+      return words.join(" ").toUpperCase() + (userIntent.trim().split(/\s+/).length > 5 ? "..." : "");
+    }
+
+    return "New Session";
   }
-
-
-  return "New Session";
 };
