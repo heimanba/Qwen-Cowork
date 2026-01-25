@@ -1,5 +1,18 @@
 import type { SDKMessage, PermissionResult } from "@qwen-code/sdk";
 
+export type ClaudeSettingsEnv = {
+  ANTHROPIC_AUTH_TOKEN?: string;
+  ANTHROPIC_BASE_URL?: string;
+  ANTHROPIC_MODEL?: string;
+  OPENAI_API_KEY?: string;
+  OPENAI_BASE_URL?: string;
+  OPENAI_MODEL?: string;
+  QWEN_API_KEY?: string;
+  QWEN_BASE_URL?: string;
+  QWEN_MODEL?: string;
+  API_TIMEOUT_MS?: string;
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
+};
 
 export type UserPromptMessage = {
   type: "user_prompt";

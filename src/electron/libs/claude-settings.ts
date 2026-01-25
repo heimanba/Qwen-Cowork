@@ -2,6 +2,55 @@ import type { ClaudeSettingsEnv } from "../types.js";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { loadApiConfig, saveApiConfig, type ApiConfig } from "./config-store.js";
+
+// Get current effective API configuration (prioritize UI config, fallback to file config)
+export function getCurrentApiConfig(): ApiConfig | null {
+  const uiConfig = loadApiConfig();
+  if (uiConfig) {
+    console.log("[claude-settings] Using UI config:", {
+      baseURL: uiConfig.baseURL,
+      model: uiConfig.model,
+      apiType: uiConfig.apiType
+    });
+    return uiConfig;
+  }
+
+  // Fallback to ~/.claude/settings.json
+  try {
+    const settingsPath = join(homedir(), ".claude", "settings.json");
+    const raw = readFileSync(settingsPath, "utf8");
+    const parsed = JSON.parse(raw) as { env?: Record<string, unknown> };
+    if (parsed.env) {
+      const authToken = parsed.env.ANTHROPIC_AUTH_TOKEN;
+      const baseURL = parsed.env.ANTHROPIC_BASE_URL;
+      const model = parsed.env.ANTHROPIC_MODEL;
+
+      if (authToken && baseURL && model) {
+        console.log("[claude-settings] Using file config from ~/.claude/settings.json");
+        const config: ApiConfig = {
+          apiKey: String(authToken),
+          baseURL: String(baseURL),
+          model: String(model),
+          apiType: "anthropic"
+        };
+        // Persist to api-config.json
+        try {
+          saveApiConfig(config);
+          console.log("[claude-settings] Persisted config to api-config.json");
+        } catch (e) {
+          console.error("[claude-settings] Failed to persist config:", e);
+        }
+        return config;
+      }
+    }
+  } catch {
+    // Ignore missing or invalid Claude settings file
+  }
+  
+  console.log("[claude-settings] No config found");
+  return null;
+}
 
 // Environment variable keys for Qwen/OpenAI compatible configuration
 // These can be configured via ~/.qwen/settings.json or environment variables
