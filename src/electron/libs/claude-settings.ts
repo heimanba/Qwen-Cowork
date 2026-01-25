@@ -16,7 +16,40 @@ export function getCurrentApiConfig(): ApiConfig | null {
     return uiConfig;
   }
 
-  // Fallback to ~/.claude/settings.json
+  // Try ~/.qwen/settings.json first
+  try {
+    const qwenSettingsPath = join(homedir(), ".qwen", "settings.json");
+    const raw = readFileSync(qwenSettingsPath, "utf8");
+    const parsed = JSON.parse(raw) as { env?: Record<string, unknown> };
+    if (parsed.env) {
+      // Support multiple API key formats
+      const apiKey = parsed.env.QWEN_API_KEY || parsed.env.OPENAI_API_KEY || parsed.env.ANTHROPIC_AUTH_TOKEN;
+      const baseURL = parsed.env.QWEN_BASE_URL || parsed.env.OPENAI_BASE_URL || parsed.env.ANTHROPIC_BASE_URL;
+      const model = parsed.env.QWEN_MODEL || parsed.env.OPENAI_MODEL || parsed.env.ANTHROPIC_MODEL;
+
+      if (apiKey && baseURL && model) {
+        console.log("[claude-settings] Using Qwen config from ~/.qwen/settings.json");
+        const config: ApiConfig = {
+          apiKey: String(apiKey),
+          baseURL: String(baseURL),
+          model: String(model),
+          apiType: "anthropic"
+        };
+        // Persist to api-config.json
+        try {
+          saveApiConfig(config);
+          console.log("[claude-settings] Persisted config to api-config.json");
+        } catch (e) {
+          console.error("[claude-settings] Failed to persist config:", e);
+        }
+        return config;
+      }
+    }
+  } catch {
+    // Ignore missing or invalid Qwen settings file
+  }
+
+  // Fallback to ~/.claude/settings.json for backward compatibility
   try {
     const settingsPath = join(homedir(), ".claude", "settings.json");
     const raw = readFileSync(settingsPath, "utf8");
@@ -27,7 +60,7 @@ export function getCurrentApiConfig(): ApiConfig | null {
       const model = parsed.env.ANTHROPIC_MODEL;
 
       if (authToken && baseURL && model) {
-        console.log("[claude-settings] Using file config from ~/.claude/settings.json");
+        console.log("[claude-settings] Using Claude config from ~/.claude/settings.json (legacy)");
         const config: ApiConfig = {
           apiKey: String(authToken),
           baseURL: String(baseURL),
