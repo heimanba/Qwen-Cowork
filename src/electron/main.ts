@@ -19,7 +19,16 @@ function killViteDevServer(): void {
         if (process.platform === 'win32') {
             execSync(`for /f "tokens=5" %a in ('netstat -ano ^| findstr :${DEV_PORT}') do taskkill /PID %a /F`, { stdio: 'ignore', shell: 'cmd.exe' });
         } else {
-            execSync(`lsof -ti:${DEV_PORT} | xargs kill -9 2>/dev/null || true`, { stdio: 'ignore' });
+            // First try graceful shutdown with SIGTERM, then force kill if needed
+            execSync(`lsof -ti:${DEV_PORT} | xargs kill -15 2>/dev/null || true`, { stdio: 'ignore' });
+            // Give it a moment to shut down gracefully
+            setTimeout(() => {
+                try {
+                    execSync(`lsof -ti:${DEV_PORT} | xargs kill -9 2>/dev/null || true`, { stdio: 'ignore' });
+                } catch {
+                    // Process already dead
+                }
+            }, 500);
         }
     } catch {
         // Process may already be dead
